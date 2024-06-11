@@ -9,7 +9,7 @@ def generate_uid():
     return current_seconds
 
 face_cascade = cv2.CascadeClassifier('models/haarcascade_frontalface_default.xml')
-time.sleep(.5)
+time.sleep(1)
 
 try:
     conn = sqlite3.connect('customer_faces_data.db')
@@ -19,7 +19,7 @@ except sqlite3.Error as e:
 
 try:
     c.execute('''CREATE TABLE IF NOT EXISTS customers
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_uid TEXT, customer_name TEXT, image_path TEXT)''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_uid TEXT, customer_name TEXT,confirm DEFAULT 0)''')
 except sqlite3.Error as e:
     print("SQLite error:", e)
 
@@ -27,7 +27,7 @@ customer_name = input('Enter the Customer Name: ')
 customer_uid = generate_uid()
 
 print("Please get your face ready!")
-time.sleep(1)
+time.sleep(2)
 
 camera = cv2.VideoCapture(0)
 camera.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
@@ -45,7 +45,6 @@ while True:
         break
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
     faces = face_cascade.detectMultiScale(gray, 1.1, 5)
 
     if len(faces) > 0:
@@ -57,9 +56,6 @@ while True:
     if cv2.waitKey(1) & 0xFF == ord('q'):
         print("User quit the program.")
         break
-
-if not os.path.exists('dataset'):
-    os.makedirs('dataset')
 
 if len(faces) > 0:
     print("Face detected. Proceeding to capture images.")
@@ -82,8 +78,7 @@ if len(faces) > 0:
             fontBottomMargin = 5
 
             cv2.putText(image, f"Generating image {image_count+1}", (x, y - fontBottomMargin), fontFace, fontScale, fontColor, fontWeight)
-
-            if (time.time() - current_time) * 1000 >= interval and image_count < 50:
+            if (time.time() - current_time) * 1000 >= interval and image_count < 201:
                 image_name = f"data.{customer_uid}_{image_count+1}.jpg"
                 image_path = os.path.join('dataset', image_name)
                 
@@ -91,15 +86,14 @@ if len(faces) > 0:
                 current_time = time.time()
                 image_count += 1
 
-                try:
-                    c.execute("INSERT INTO customers (customer_uid, customer_name, image_path) VALUES (?, ?, ?)", (customer_uid, customer_name, image_path))
-                    conn.commit()
-                except sqlite3.Error as e:
-                    print("SQLite error:", e)
-
         cv2.imshow("Dataset Generating...", image)
 
-        if cv2.waitKey(1) & 0xFF == ord('q') or image_count >= 50:
+        if cv2.waitKey(1) & 0xFF == ord('q') or image_count >= 200:
+            try:
+                c.execute("INSERT INTO customers (customer_uid, customer_name) VALUES (?, ?)", (customer_uid, customer_name))
+                conn.commit()
+            except sqlite3.Error as e:
+                print("SQLite error:", e)
             break
 
 camera.release()

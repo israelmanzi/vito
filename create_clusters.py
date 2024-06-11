@@ -18,7 +18,9 @@ def extract_features(img_path, model):
     return features
 
 vgg16_model = kapp.vgg16.VGG16(weights='imagenet', include_top=False, pooling='avg')
+
 images_folder = "dataset"
+
 image_files = [os.path.join(images_folder, img) for img in os.listdir(images_folder) if img.endswith('.jpg')]
 
 all_features = []

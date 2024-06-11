@@ -27,7 +27,6 @@ def train_recognizer(dataset_path):
     recognizer = cv2.face.LBPHFaceRecognizer_create()
 
     faces, Ids = getImagesAndLabels(dataset_path)
-
     if len(faces) == 0:
         print("No faces found in the dataset.")
         return
@@ -39,5 +38,4 @@ def train_recognizer(dataset_path):
 
 if __name__ == "__main__":
     dataset_path = "dataset"
-
     train_recognizer(dataset_path)
