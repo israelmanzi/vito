@@ -1,115 +1,247 @@
 import cv2
-import sqlite3
 import numpy as np
-from keras.models import load_model
+import mediapipe as mp
+import sqlite3
+import serial
 
-faceRecognizer = cv2.face.LBPHFaceRecognizer_create()
-faceRecognizer.read("models/trained_lbph_face_recognizer_model.yml")
-faceCascade = cv2.CascadeClassifier("models/haarcascade_frontalface_default.xml")
-signModel = load_model("models/keras_model.h5", compile=False)
-class_names = open("models/labels.txt", "r").readlines()
+# Load the face detection model
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
-fontFace = cv2.FONT_HERSHEY_SIMPLEX
-fontScale = 0.6
-fontColor = (255, 255, 255)
-fontWeight = 2
-fontBottomMargin = 30
-nametagHeight = 50
-faceRectangleBorderSize = 2
-knownTagColor = (100, 180, 0)
-unknownTagColor = (0, 0, 255)
-knownFaceRectangleColor = knownTagColor
-unknownFaceRectangleColor = unknownTagColor
-recognition_count = {}
-REQUIRED_RECOGNITION_COUNT = 5
-face_recognized = False
+# Load the sunglasses images
+sunglasses_male = cv2.imread('images/sunglasses-black.png', cv2.IMREAD_UNCHANGED)
+sunglasses_female = cv2.imread('images/sunglasses-kitty-02.png', cv2.IMREAD_UNCHANGED)
 
-camera = cv2.VideoCapture(0)
+# Load the gender detection model
+genderProto = "models/gender_deploy.prototxt"
+genderModel = "models/gender_net.caffemodel"
+genderNet = cv2.dnn.readNet(genderModel, genderProto)
 
-while True:
-    ret, frame = camera.read()
-    if not ret:
-        break
+# Define a scaling factor for the sunglasses size
+sunglasses_scale = 0.9  # Adjust as needed
 
-    if not face_recognized:
+# Gender classification threshold
+gender_threshold = 0.6  # Adjust as needed
+
+def create_cart_table():
+    conn = sqlite3.connect('faces.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS cart (
+            cart_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_uid INTEGER,
+            item_name TEXT,
+            item_count INTEGER,
+            FOREIGN KEY(customer_uid) REFERENCES customers(customer_uid)
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def add_item_to_cart(customer_id, item_name):
+    conn = sqlite3.connect('faces.db')
+    cursor = conn.cursor()
+
+    # Check if the item is already in the cart for the customer
+    cursor.execute('''
+        SELECT item_count FROM cart WHERE customer_uid = ? AND item_name = ?
+    ''', (customer_id, item_name))
+    result = cursor.fetchone()
+
+    if result:
+        # Item already in cart, update the count
+        new_count = result[0] + 1
+        cursor.execute('''
+            UPDATE cart SET item_count = ? WHERE customer_uid = ? AND item_name = ?
+        ''', (new_count, customer_id, item_name))
+    else:
+        # Item not in cart, insert a new row
+        new_count = 1
+        cursor.execute('''
+            INSERT INTO cart (customer_uid, item_name, item_count) VALUES (?, ?, 1)
+        ''', (customer_id, item_name))
+
+    conn.commit()
+    conn.close()
+
+    return new_count
+
+def get_customer_name(predicted_id):
+    conn = sqlite3.connect('faces.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT customer_name FROM customers WHERE customer_uid = ?", (predicted_id,))
+    result = cursor.fetchone()
+    conn.close()
+    if result:
+        return result[0]
+    else:
+        return "Unknown"
+
+def add_ok_sign_column():
+    try:
+        conn = sqlite3.connect('faces.db')
+        cursor = conn.cursor()
+        cursor.execute("ALTER TABLE customers ADD COLUMN ok_sign_detected INTEGER DEFAULT 0")
+        conn.commit()
+        print("Column 'ok_sign_detected' added successfully.")
+    except sqlite3.OperationalError as e:
+        print(f"SQLite error: {e}")
+
+def update_ok_sign_detected(predicted_id, ok_sign_detected):
+    conn = sqlite3.connect('faces.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE customers SET ok_sign_detected = ? WHERE customer_uid = ?", (ok_sign_detected, predicted_id))
+    conn.commit()
+    conn.close()
+
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+
+def detect_ok_sign(image, hand_landmarks):
+    if hand_landmarks:
+        for hand_landmark in hand_landmarks:
+            thumb_tip = hand_landmark.landmark[mp_hands.HandLandmark.THUMB_TIP]
+            index_tip = hand_landmark.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+            index_mcp = hand_landmark.landmark[mp_hands.HandLandmark.INDEX_FINGER_MCP]
+
+            if (abs(thumb_tip.x - index_tip.x) < 0.02 and
+                abs(thumb_tip.y - index_tip.y) < 0.02 and
+                index_tip.y < index_mcp.y):
+                return True
+    return False
+
+def fetch_cart_details(customer_id):
+    conn = sqlite3.connect('faces.db')
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT customer_name FROM customers WHERE customer_uid = ?", (customer_id,))
+    customer_name = cursor.fetchone()[0]
+
+    cursor.execute("SELECT item_name, item_count FROM cart WHERE customer_uid = ?", (customer_id,))
+    cart_items = cursor.fetchall()
+
+    conn.close()
+
+    return customer_name, cart_items
+
+def main():
+    faceRecognizer = cv2.face.LBPHFaceRecognizer_create()
+    faceRecognizer.read("models/trained_lbph_face_recognizer_model.yml")
+
+    # Load Haarcascade for face detection
+    faceCascade = cv2.CascadeClassifier("models/haarcascade_frontalface_default.xml")
+    
+    cam = cv2.VideoCapture(0)
+    hands = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.5)
+    
+    ok_sign_count = 0
+
+    # Initialize serial communication
+    # ser = serial.Serial('COM12', 9600)
+    
+    while True:
+        ret, frame = cam.read()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = faceCascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-
+        faces = faceCascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5, minSize=(100, 100))
+        
+        conf = -1  # Initialize conf to a default value
         for (x, y, w, h) in faces:
-            customer_uid, confidence = faceRecognizer.predict(gray[y:y + h, x:x + w])
-            customer_name = "Unknown"
-            nametagColor = unknownTagColor
-            faceRectangleColor = unknownFaceRectangleColor
+            roi_gray = gray[y:y + h, x:x + w]
+            id_, conf = faceRecognizer.predict(roi_gray)
+            
+            if conf >= 45:
+                customer_name = get_customer_name(id_)
+                label = f"{customer_name} - {round(conf, 2)}%"
+            else:
+                label = "Unknown"
+            
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
 
-            if 60 < confidence < 85:
-                try:
-                    conn = sqlite3.connect('customer_faces_data.db')
-                    c = conn.cursor()
-                    c.execute("SELECT customer_name FROM customers WHERE customer_uid = ?", (customer_uid,))
-                    row = c.fetchone()
-                except sqlite3.Error as e:
-                    print("SQLite error:", e)
-                    row = None
-                finally:
-                    if conn:
-                        conn.close()
+            # Prepare the input image for gender detection
+            face_roi = frame[y:y + h, x:x + w]
+            blob = cv2.dnn.blobFromImage(face_roi, 1.0, (227, 227), (78.4263377603, 87.7689143744, 114.895847746), swapRB=False)
 
-                if row:
-                    customer_name = row[0].split(" ")[0]
-                    nametagColor = knownTagColor
-                    faceRectangleColor = knownFaceRectangleColor
+            # Run gender detection
+            genderNet.setInput(blob)
+            genderPreds = genderNet.forward()
 
-                    if customer_uid not in recognition_count:
-                        recognition_count[customer_uid] = 0
-                    recognition_count[customer_uid] += 1
+            # Get the predicted gender and confidence
+            gender = "Male" if genderPreds[0, 0] > gender_threshold else "Female"
+            gender_confidence = genderPreds[0, 0]
 
-                    if recognition_count[customer_uid] >= REQUIRED_RECOGNITION_COUNT:
-                        face_recognized = True
-                        current_customer_uid = customer_uid
-                        print(f"Face recognized: {customer_name}")
-                        break
+            # Choose the sunglasses based on gender
+            if gender == "Male":
+                sunglasses = sunglasses_male
+                sunglasses_name = 'Black Sunglasses'
+            else:
+                sunglasses = sunglasses_female
+                sunglasses_name = 'Kitty Sunglasses'
 
-            cv2.rectangle(frame, (x - 20, y - 20), (x + w + 20, y + h + 20), faceRectangleColor, faceRectangleBorderSize)
-            cv2.rectangle(frame, (x - 22, y - nametagHeight), (x + w + 22, y - 22), nametagColor, -1)
-            cv2.putText(frame, f"{customer_name}", (x, y - fontBottomMargin), fontFace, fontScale, fontColor, fontWeight)
+            # Calculate the position and size of the sunglasses
+            sunglasses_width = int(sunglasses_scale * w)
+            sunglasses_height = int(sunglasses_width * sunglasses.shape[0] / sunglasses.shape[1])
 
-    if face_recognized:
-        ret, sign_image = camera.read()
-        if not ret:
+            # Resize the sunglasses image
+            sunglasses_resized = cv2.resize(sunglasses, (sunglasses_width, sunglasses_height))
+
+            # Calculate the position to place the sunglasses
+            x1 = x + int(w / 2) - int(sunglasses_width / 2)
+            x2 = x1 + sunglasses_width
+            y1 = y + int(0.35 * h) - int(sunglasses_height / 2)
+            y2 = y1 + sunglasses_height
+
+            # Adjust for out-of-bounds positions
+            x1 = max(x1, 0)
+            x2 = min(x2, frame.shape[1])
+            y1 = max(y1, 0)
+            y2 = min(y2, frame.shape[0])
+
+            # Create a mask for the sunglasses
+            sunglasses_mask = sunglasses_resized[:, :, 3] / 255.0
+            frame_roi = frame[y1:y2, x1:x2]
+
+            # Blend the sunglasses with the frame
+            for c in range(0, 3):
+                frame_roi[:, :, c] = (1.0 - sunglasses_mask) * frame_roi[:, :, c] + sunglasses_mask * sunglasses_resized[:, :, c]
+
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = hands.process(rgb_frame)
+        
+        ok_sign_detected = detect_ok_sign(rgb_frame, results.multi_hand_landmarks)
+        
+        if ok_sign_detected:
+            cv2.putText(frame, "OK Sign Detected", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+            if conf >= 45:
+                update_ok_sign_detected(id_, 1)
+                ok_sign_count = add_item_to_cart(id_, sunglasses_name)  # Add the sunglasses to the cart and get the count
+
+                # Fetch cart details
+                customer_name, cart_items = fetch_cart_details(id_)
+                cart_details = f"Customer: {customer_name}\nCart Items:\n"
+                for item_name, item_count in cart_items:
+                    cart_details += f"{item_name}: {item_count}\n"
+
+                # Send cart details via Serial
+                # ser.write(cart_details.encode())
+                # print("Data sent successfully via Serial")
+        
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+        
+        # Display the OK sign count on the frame
+        cv2.putText(frame, f"Items in Cart: {ok_sign_count}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 3)
+        
+        cv2.imshow('Face and Hand Gesture Recognition', frame)
+        
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+    
+    cam.release()
+    cv2.destroyAllWindows()
 
-        sign_image_resized = cv2.resize(sign_image, (224, 224), interpolation=cv2.INTER_AREA)
-        sign_image_array = np.asarray(sign_image_resized, dtype=np.float32).reshape(1, 224, 224, 3)
-        sign_image_normalized = (sign_image_array / 127.5) - 1
-        prediction = signModel.predict(sign_image_normalized)
-        index = np.argmax(prediction)
-        class_name = class_names[index].strip()
-        confidence_score = prediction[0][index]
-
-        cv2.putText(sign_image, f"Sign: {class_name[2:]} ({confidence_score*100:.2f}%)", (10, 30), fontFace, 1, (0, 255, 0), 2)
-        cv2.imshow("Sign Detection", sign_image)
-
-        if class_name[2:].lower() == "class 1" and confidence_score > 0.75:
-            try:
-                conn = sqlite3.connect('customer_faces_data.db')
-                c = conn.cursor()
-                c.execute("UPDATE customers SET confirm = 1 WHERE customer_uid = ?", (current_customer_uid,))
-                conn.commit()
-                print(f"{customer_name} confirmed!")
-            except sqlite3.Error as e:
-                print("SQLite error:", e)
-            finally:
-                if conn:
-                    conn.close()
-
-            recognition_count = {}
-            face_recognized = False
-
-    if not face_recognized:
-        cv2.imshow('Detecting Faces...', frame)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-camera.release()
-cv2.destroyAllWindows()
+if __name__ == '__main__':
+    # Uncomment the next line when running for the first time to add the column
+    # add_ok_sign_column()
+    create_cart_table()  # Create the cart table if it doesn't exist
+    main()
