@@ -139,7 +139,6 @@ def main():
 
                 # Send cart details via Serial
                 ser.write(cart_details.encode())
-                print(cart_details.encode())
                 time.sleep(.5)
                 print("Data sent successfully via serial interface!")
         
