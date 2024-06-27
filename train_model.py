@@ -3,7 +3,7 @@ import os
 import numpy as np
 
 # Load the Haar Cascade Classifier for face detection
-detector = cv2.CascadeClassifier("models/haarcascade_frontalface_default.xml")
+cascade_detector = cv2.CascadeClassifier("models/haarcascade_frontalface_default.xml")
 
 def getImagesAndLabels(path, target_size=(100, 100)):
     imagePaths = [os.path.join(path, f) for f in os.listdir(path) if not f.startswith('.')]
@@ -15,7 +15,7 @@ def getImagesAndLabels(path, target_size=(100, 100)):
             image = cv2.resize(image, target_size)  # Resize image to target size
             filename = os.path.basename(imagePath)
             customer_id = int(filename.split("_")[0].split(".")[1])  # Extract customer ID
-            faces = detector.detectMultiScale(image)
+            faces = cascade_detector.detectMultiScale(image)
             for (x, y, w, h) in faces:
                 face = image[y:y + h, x:x + w]
                 faceSamples.append(face)

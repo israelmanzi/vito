@@ -35,19 +35,31 @@ python create_dataset.py
 python create_clusters.py
 ```
 
-3. Use `rearrange_data.py` to rearrange the clustered data for training.
+3. Execute `review_clusters.py` to display images in clusters created.
+
+```bash
+python review_clusters.py
+```
+
+4. Use `rearrange_data.py` to rearrange the clustered data for training.
 
 ```bash
 python rearrange_data.py
 ```
 
-4. Train the model using `train_model.py`.
+5. Execute `review_dataset.py` to review images before training.
+
+```bash
+python review_dataset.py
+```
+
+6. Train the model using `train_model.py`.
 
 ```bash
 python train_model.py
 ```
 
-5. Finally, run `make_predictions.py` to make predictions using the trained model.
+7. Finally, run `make_predictions.py` to make predictions using the trained model.
 
 ```bash
 python make_predictions.py

@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
 import mediapipe as mp
-import sqlite3
 import serial
+from utils.data import *
 
 # Load the face detection model
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -17,81 +17,10 @@ genderModel = "models/gender_net.caffemodel"
 genderNet = cv2.dnn.readNet(genderModel, genderProto)
 
 # Define a scaling factor for the sunglasses size
-sunglasses_scale = 0.9  # Adjust as needed
+sunglasses_scale = 0.9
 
 # Gender classification threshold
-gender_threshold = 0.6  # Adjust as needed
-
-def create_cart_table():
-    conn = sqlite3.connect('faces.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS cart (
-            cart_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_uid INTEGER,
-            item_name TEXT,
-            item_count INTEGER,
-            FOREIGN KEY(customer_uid) REFERENCES customers(customer_uid)
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-def add_item_to_cart(customer_id, item_name):
-    conn = sqlite3.connect('faces.db')
-    cursor = conn.cursor()
-
-    # Check if the item is already in the cart for the customer
-    cursor.execute('''
-        SELECT item_count FROM cart WHERE customer_uid = ? AND item_name = ?
-    ''', (customer_id, item_name))
-    result = cursor.fetchone()
-
-    if result:
-        # Item already in cart, update the count
-        new_count = result[0] + 1
-        cursor.execute('''
-            UPDATE cart SET item_count = ? WHERE customer_uid = ? AND item_name = ?
-        ''', (new_count, customer_id, item_name))
-    else:
-        # Item not in cart, insert a new row
-        new_count = 1
-        cursor.execute('''
-            INSERT INTO cart (customer_uid, item_name, item_count) VALUES (?, ?, 1)
-        ''', (customer_id, item_name))
-
-    conn.commit()
-    conn.close()
-
-    return new_count
-
-def get_customer_name(predicted_id):
-    conn = sqlite3.connect('faces.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT customer_name FROM customers WHERE customer_uid = ?", (predicted_id,))
-    result = cursor.fetchone()
-    conn.close()
-    if result:
-        return result[0]
-    else:
-        return "Unknown"
-
-def add_ok_sign_column():
-    try:
-        conn = sqlite3.connect('faces.db')
-        cursor = conn.cursor()
-        cursor.execute("ALTER TABLE customers ADD COLUMN ok_sign_detected INTEGER DEFAULT 0")
-        conn.commit()
-        print("Column 'ok_sign_detected' added successfully.")
-    except sqlite3.OperationalError as e:
-        print(f"SQLite error: {e}")
-
-def update_ok_sign_detected(predicted_id, ok_sign_detected):
-    conn = sqlite3.connect('faces.db')
-    cursor = conn.cursor()
-    cursor.execute("UPDATE customers SET ok_sign_detected = ? WHERE customer_uid = ?", (ok_sign_detected, predicted_id))
-    conn.commit()
-    conn.close()
+gender_threshold = 0.6
 
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
@@ -108,20 +37,6 @@ def detect_ok_sign(image, hand_landmarks):
                 index_tip.y < index_mcp.y):
                 return True
     return False
-
-def fetch_cart_details(customer_id):
-    conn = sqlite3.connect('faces.db')
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT customer_name FROM customers WHERE customer_uid = ?", (customer_id,))
-    customer_name = cursor.fetchone()[0]
-
-    cursor.execute("SELECT item_name, item_count FROM cart WHERE customer_uid = ?", (customer_id,))
-    cart_items = cursor.fetchall()
-
-    conn.close()
-
-    return customer_name, cart_items
 
 def main():
     faceRecognizer = cv2.face.LBPHFaceRecognizer_create()
@@ -241,7 +156,6 @@ def main():
     cv2.destroyAllWindows()
 
 if __name__ == '__main__':
-    # Uncomment the next line when running for the first time to add the column
     # add_ok_sign_column()
-    create_cart_table()  # Create the cart table if it doesn't exist
+    # create_cart_table()
     main()

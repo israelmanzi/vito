@@ -26,12 +26,12 @@ for cluster_dir in os.listdir(source_dir):
 shutil.rmtree(source_dir)
 
 # Connect to the SQLite database
-conn = sqlite3.connect('faces.db')
-c = conn.cursor()
+connection = sqlite3.connect('faces.db')
+cursor = connection.cursor()
 
 # Retrieve all records from the 'faces' table
-c.execute("SELECT id, image_path FROM customers")
-rows = c.fetchall()
+cursor.execute("SELECT id, image_path FROM customers")
+rows = cursor.fetchall()
 
 # Loop through each record
 for row in rows:
@@ -40,9 +40,9 @@ for row in rows:
     # Check if the associated picture file exists in the 'dataset' folder
     if not os.path.isfile(image_path):
         # If the picture file does not exist, delete the record from the 'faces' table
-        c.execute("DELETE FROM customers WHERE id=?", (row[0],))
-        conn.commit()
-        print(f"Deleted record with id {row[0]} because the associated picture '{image_path}' does not exist.")
+        cursor.execute("DELETE FROM customers WHERE id=?", (row[0],))
+        connection.commit()
 
 # Close the database connection
-conn.close()
+connection.close()
+print("Successfully copied images from 'dataset-clusters' to 'dataset'!")
