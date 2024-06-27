@@ -1,7 +1,7 @@
 import cv2
-import numpy as np
 import mediapipe as mp
 import serial
+import time
 from utils.data import *
 
 # Load the face detection model
@@ -51,7 +51,7 @@ def main():
     ok_sign_count = 0
 
     # Initialize serial communication
-    # ser = serial.Serial('COM12', 9600)
+    ser = serial.Serial('COM10', 9600)
     
     while True:
         ret, frame = cam.read()
@@ -123,29 +123,32 @@ def main():
         results = hands.process(rgb_frame)
         
         ok_sign_detected = detect_ok_sign(rgb_frame, results.multi_hand_landmarks)
-        
+        item = ""
         if ok_sign_detected:
             cv2.putText(frame, "OK Sign Detected", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
             if conf >= 45:
                 update_ok_sign_detected(id_, 1)
-                ok_sign_count = add_item_to_cart(id_, sunglasses_name)  # Add the sunglasses to the cart and get the count
+                add_item_to_cart(id_, sunglasses_name)  # Add the sunglasses to the cart
 
                 # Fetch cart details
                 customer_name, cart_items = fetch_cart_details(id_)
                 cart_details = f"Customer: {customer_name}\nCart Items:\n"
                 for item_name, item_count in cart_items:
                     cart_details += f"{item_name}: {item_count}\n"
+                    item = item_name
 
                 # Send cart details via Serial
-                # ser.write(cart_details.encode())
-                # print("Data sent successfully via Serial")
+                ser.write(cart_details.encode())
+                print(cart_details.encode())
+                time.sleep(.5)
+                print("Data sent successfully via serial interface!")
         
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
                 mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
         
         # Display the OK sign count on the frame
-        cv2.putText(frame, f"Items in Cart: {ok_sign_count}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 3)
+        cv2.putText(frame, f"Item added in cart: {item}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 3)
         
         cv2.imshow('Face and Hand Gesture Recognition', frame)
         
